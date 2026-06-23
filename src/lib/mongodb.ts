@@ -1,3 +1,5 @@
+// MongoDB connection management with caching for serverless environments
+// Prevents connection pool exhaustion in Next.js hot-reload scenarios
 import mongoose from "mongoose";
 import dns from "node:dns";
 
@@ -7,11 +9,13 @@ if (!MONGODB_URI) {
   throw new Error("MONGODB_URI no esta definido. Revisa tu archivo .env.local.");
 }
 
+// Global cache type to store persistent Mongoose connection
 type CachedConnection = {
   conn: typeof mongoose | null;
   promise: Promise<typeof mongoose> | null;
 };
 
+// Leverage globalThis to maintain connection across hot-reloads
 const globalForMongoose = globalThis as typeof globalThis & {
   mongooseCache?: CachedConnection;
 };
@@ -19,12 +23,17 @@ const globalForMongoose = globalThis as typeof globalThis & {
 const cached = globalForMongoose.mongooseCache ?? { conn: null, promise: null };
 globalForMongoose.mongooseCache = cached;
 
+// Connect to MongoDB with connection pooling and DNS configuration
+// Uses global cache to prevent duplicate connections across hot-reloads
 export async function connectToDatabase() {
+  // Return cached connection if already established
   if (cached.conn) {
     return cached.conn;
   }
 
+  // Create new connection if not already in progress
   if (!cached.promise) {
+    // Configure DNS servers for SRV records (Atlas) to prevent ECONNREFUSED
     if (MONGODB_URI?.startsWith("mongodb+srv://")) {
       const dnsServers = process.env.MONGODB_DNS_SERVERS ?? "1.1.1.1,8.8.8.8";
       dns.setServers(
@@ -35,9 +44,9 @@ export async function connectToDatabase() {
       );
     }
 
-    // En desarrollo Next recompila modulos con frecuencia; cachear evita conexiones duplicadas.
+    // Cache the promise to avoid multiple connection attempts during hot-reload
     cached.promise = mongoose.connect(MONGODB_URI!, {
-      bufferCommands: false,
+      bufferCommands: false, // Fail fast if connection unavailable
     });
   }
 
